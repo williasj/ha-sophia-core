@@ -141,7 +141,7 @@ SOPHIA is designed around a modular, local-first philosophy:
 
 If SOPHIA is useful to you, feel free to buy me a coffee!
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/sophiadev])
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/sophiadev)
 
 ## License
 
