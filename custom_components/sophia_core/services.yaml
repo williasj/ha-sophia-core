@@ -1,0 +1,81 @@
+# Services provided by SOPHIA Core
+list_modules:
+  name: List Modules
+  description: Display all registered SOPHIA modules in a notification
+  fields: {}
+get_module_status:
+  name: Get Module Status
+  description: Display detailed status information for a specific SOPHIA module
+  fields:
+    module_id:
+      name: Module ID
+      description: The ID of the module to query (e.g., "sophia_climate")
+      required: true
+      example: "sophia_climate"
+      selector:
+        text:
+rebuild_dashboard:
+  name: Rebuild Dashboard
+  description: Regenerate the SOPHIA dashboard with current module configurations
+  fields: {}
+llm_health_check:
+  name: LLM Health Check
+  description: Check the health and connectivity of the configured Ollama server and augmentation services
+  fields: {}
+get_dashboard_yaml:
+  name: Get Dashboard YAML
+  description: Get the SOPHIA dashboard configuration in YAML format for manual creation
+  fields: {}
+expose_all_entities:
+  name: Expose All SOPHIA Entities
+  description: Automatically expose all SOPHIA module entities to conversation agents (for SOPHIA Assist)
+  fields: {}
+# Token Tracking Services
+get_token_stats:
+  name: Get Token Statistics
+  description: Display detailed token usage statistics and cost estimates in a notification
+  fields:
+    module_id:
+      name: Module ID (Optional)
+      description: Show stats for a specific module, or leave blank for platform-wide stats
+      required: false
+      example: "sophia_climate"
+      selector:
+        text:
+set_token_pricing:
+  name: Set Token Pricing
+  description: Configure pricing for token cost estimation (for commercial LLM providers)
+  fields:
+    input_cost_per_1k:
+      name: Input Cost per 1K Tokens
+      description: Cost per 1,000 input tokens (e.g., 0.003 for $3.00 per 1M tokens)
+      required: true
+      example: 0.003
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.001
+          mode: box
+    output_cost_per_1k:
+      name: Output Cost per 1K Tokens
+      description: Cost per 1,000 output tokens (e.g., 0.015 for $15.00 per 1M tokens)
+      required: true
+      example: 0.015
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.001
+          mode: box
+reset_token_stats:
+  name: Reset Token Statistics
+  description: Reset all token usage statistics (use with caution!)
+  fields:
+    confirm:
+      name: Confirmation
+      description: Type 'RESET' to confirm resetting all statistics
+      required: true
+      example: "RESET"
+      selector:
+        text:
