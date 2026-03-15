@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/sophia_logo.png" alt="SOPHIA" width="200"/>
+  <img src="https://raw.githubusercontent.com/williasj/ha-sophia-core/main/images/sophia_logo.png" alt="SOPHIA" width="200"/>
 </p>
 
 <h1 align="center">SOPHIA Core</h1>
