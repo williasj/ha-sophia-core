@@ -1,0 +1,7 @@
+{
+  "name": "SOPHIA Core",
+  "description": "LLM performance metrics, token tracking, and inference orchestration for SOPHIA",
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "iot_class": "local_polling"
+}
