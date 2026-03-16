@@ -76,7 +76,7 @@ class SophiaCoreStatusSensor(SensorEntity):
         uptime = datetime.now() - self._startup_time
         
         return {
-            "version": "1.5.0",
+            "version": "1.5.1",
             "startup_time": self._startup_time.isoformat(),
             "uptime": str(uptime).split('.')[0],  # Remove microseconds
             "uptime_seconds": int(uptime.total_seconds())

@@ -30,7 +30,7 @@ EVENT_LLM_RESPONSE = f"{DOMAIN}_llm_response"
 EVENT_DASHBOARD_UPDATED = f"{DOMAIN}_dashboard_updated"
 
 # Dashboard constants
-SOPHIA_DASHBOARD_URL = "sophia"
+SOPHIA_DASHBOARD_URL = "s-o-p-h-i-a"
 
 # Token estimation constants
 AVG_CHARS_PER_TOKEN = 4
@@ -985,21 +985,81 @@ class SophiaDashboardManager:
     def __init__(self, hass: HomeAssistant, registry: "SophiaModuleRegistry"):
         self.hass = hass
         self.registry = registry
-        self._store = Store(
-            hass, version=1, minor_version=1, key=f"lovelace.{SOPHIA_DASHBOARD_URL}"
-        )
 
     def _write_yaml_file(self, filepath: str, content: str):
         """Write YAML file synchronously (called from executor)"""
         with open(filepath, "w") as f:
             f.write(content)
 
+    async def _push_lovelace_config(self, config: Dict[str, Any]) -> bool:
+        """Push config directly to the live Lovelace store, triggering browser reload.
+
+        Accesses hass.data["lovelace"]["dashboards"][SOPHIA_DASHBOARD_URL] and calls
+        async_save() on the LovelaceStorage object, which persists the config AND
+        fires the lovelace_updated WebSocket event so all connected browsers reload.
+
+        Returns True on success, False if the store is not accessible (e.g. dashboard
+        not yet created via UI, or Lovelace not initialised).
+        """
+        try:
+            lovelace_data = self.hass.data.get("lovelace")
+            if lovelace_data is None:
+                _LOGGER.warning("sophia_core: hass.data['lovelace'] not found, cannot live-push")
+                return False
+
+            # Support both dict-style and attribute-style access (HA version differences)
+            if hasattr(lovelace_data, "dashboards"):
+                dashboards = lovelace_data.dashboards
+            elif isinstance(lovelace_data, dict):
+                dashboards = lovelace_data.get("dashboards", {})
+            else:
+                _LOGGER.warning(
+                    "sophia_core: unexpected lovelace_data type: %s - available keys: %s",
+                    type(lovelace_data),
+                    dir(lovelace_data)
+                )
+                return False
+
+            dashboard_store = dashboards.get(SOPHIA_DASHBOARD_URL)
+            if dashboard_store is None:
+                _LOGGER.warning(
+                    "sophia_core: dashboard '%s' not in Lovelace store (found: %s). "
+                    "Dashboard must be created once via Settings > Dashboards first.",
+                    SOPHIA_DASHBOARD_URL, list(dashboards.keys())
+                )
+                return False
+
+            inner_config = config["config"]
+
+            # HA 2024.x+: LovelaceStorage.async_save(config)
+            # Saves to .storage AND fires lovelace_updated WebSocket event
+            if hasattr(dashboard_store, "async_save"):
+                await dashboard_store.async_save(inner_config)
+            else:
+                _LOGGER.warning(
+                    "sophia_core: LovelaceStorage has no async_save - available: %s",
+                    [m for m in dir(dashboard_store) if not m.startswith("__")]
+                )
+                return False
+
+            _LOGGER.info(
+                "sophia_core: live-pushed dashboard config to '%s' - all clients will reload",
+                SOPHIA_DASHBOARD_URL
+            )
+            return True
+        except Exception as e:
+            _LOGGER.warning("sophia_core: live Lovelace push failed: %s", e)
+            return False
+
     async def create_dashboard(self):
-        """Create SOPHIA dashboard"""
+        """Create or live-push SOPHIA dashboard config"""
         try:
             config = self._build_dashboard_config()
-            await self._store.async_save(config)
 
+            # Attempt live push first (fires lovelace_updated, no browser refresh needed)
+            pushed = await self._push_lovelace_config(config)
+
+            # Always write YAML backup regardless of push result
             import yaml
             yaml_str = yaml.dump(
                 config["config"], default_flow_style=False,
@@ -1011,19 +1071,26 @@ class SophiaDashboardManager:
             )
             _LOGGER.info("SOPHIA dashboard YAML saved to: %s", dashboard_file)
 
+            if pushed:
+                notification_message = (
+                    "Dashboard updated automatically. All connected browsers have reloaded."
+                )
+            else:
+                notification_message = (
+                    "**First-time setup required (one time only):**\n\n"
+                    "1. Settings > Dashboards > + Add Dashboard\n"
+                    "2. Title: **SOPHIA**, URL: **s-o-p-h-i-a**, Icon: **mdi:robot**\n"
+                    "3. Click edit (pencil) > Raw configuration editor\n"
+                    "4. Copy content from `/config/sophia_dashboard.yaml`\n"
+                    "5. Paste and Save\n\n"
+                    "After this one-time setup, all future updates will push automatically."
+                )
+
             await self.hass.services.async_call(
                 "persistent_notification", "create",
                 {
                     "title": "SOPHIA Dashboard Ready",
-                    "message": (
-                        "**Manual Setup Required (2 minutes):**\n\n"
-                        "1. Settings > Dashboards > + Add Dashboard\n"
-                        "2. Title: **SOPHIA**, Icon: **mdi:robot**\n"
-                        "3. Click edit > Raw configuration editor\n"
-                        "4. Copy content from `/config/sophia_dashboard.yaml`\n"
-                        "5. Paste and Save\n\n"
-                        "Or run `sophia_core.get_dashboard_yaml` for the YAML."
-                    ),
+                    "message": notification_message,
                     "notification_id": "sophia_dashboard_created",
                 }
             )
@@ -1031,19 +1098,23 @@ class SophiaDashboardManager:
             self.hass.bus.async_fire(EVENT_DASHBOARD_UPDATED, {
                 "action": "created",
                 "file": dashboard_file,
+                "live_push": pushed,
                 "timestamp": datetime.now().isoformat(),
             })
             return True
         except Exception as e:
-            _LOGGER.error("Failed to create dashboard files: %s", e)
+            _LOGGER.error("Failed to create dashboard: %s", e)
             return False
 
     async def update_dashboard(self):
-        """Update dashboard with current modules"""
+        """Update dashboard with current modules and live-push to all browsers"""
         try:
             config = self._build_dashboard_config()
-            await self._store.async_save(config)
 
+            # Attempt live push (fires lovelace_updated WebSocket event)
+            pushed = await self._push_lovelace_config(config)
+
+            # Always keep YAML backup in sync
             import yaml
             yaml_str = yaml.dump(
                 config["config"], default_flow_style=False,
@@ -1053,10 +1124,18 @@ class SophiaDashboardManager:
             await self.hass.async_add_executor_job(
                 self._write_yaml_file, dashboard_file, yaml_str
             )
-            _LOGGER.info("SOPHIA dashboard updated")
+
+            if pushed:
+                _LOGGER.info("SOPHIA dashboard updated and live-pushed to all clients")
+            else:
+                _LOGGER.warning(
+                    "SOPHIA dashboard YAML updated but live push failed - "
+                    "manual paste from sophia_dashboard.yaml required"
+                )
 
             self.hass.bus.async_fire(EVENT_DASHBOARD_UPDATED, {
                 "action": "updated",
+                "live_push": pushed,
                 "timestamp": datetime.now().isoformat(),
             })
             return True
@@ -1392,7 +1471,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SOPHIA Core from a config entry"""
 
-    _LOGGER.info("Setting up SOPHIA Core v1.5.0...")
+    _LOGGER.info("Setting up SOPHIA Core v1.5.1...")
 
     mistral_url = entry.data.get("ollama_url", "http://localhost:11434")
     mistral_model = entry.data.get("ollama_model", "mistral:latest")
@@ -1507,7 +1586,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Rebuilding SOPHIA dashboard...")
         success = await dashboard_manager.update_dashboard()
         message = (
-            "Dashboard rebuilt. Refresh your browser."
+            "Dashboard rebuilt and pushed to all browsers."
             if success else "Dashboard rebuild failed. Check logs."
         )
         await hass.services.async_call(
@@ -1666,7 +1745,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "reset_token_stats", handle_reset_token_stats)
 
     event_logger.log_event("core_started", {
-        "version": "1.5.0",
+        "version": "1.5.1",
         "llm_url": mistral_url,
         "llm_model": mistral_model,
         "llm_provider": llm_client.provider,
@@ -1679,7 +1758,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     registry.register_module(DOMAIN, {
         "name": "SOPHIA Core",
-        "version": "1.5.0",
+        "version": "1.5.1",
         "sensors": [
             "sensor.sophia_core_status",
             "sensor.sophia_llm_status",
@@ -1703,7 +1782,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         },
     })
 
-    _LOGGER.info("SOPHIA Core v1.5.0 setup complete")
+    _LOGGER.info("SOPHIA Core v1.5.1 setup complete")
     _LOGGER.info(
         "LLM: %s (model: %s, provider: %s)", mistral_url, mistral_model, llm_client.provider
     )

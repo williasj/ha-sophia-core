@@ -1,7 +1,7 @@
 {
   "domain": "sophia_core",
   "name": "SOPHIA Core",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "documentation": "https://github.com/williasj/ha-sophia-core",
   "dependencies": [],
   "codeowners": ["@williasj"],
