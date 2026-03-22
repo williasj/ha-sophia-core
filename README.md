@@ -115,12 +115,12 @@ SOPHIA Core creates the following diagnostic sensors in Home Assistant:
 
 SOPHIA Core is the foundation. Additional modules extend its capabilities:
 
-| Module | Description |
-|---|---|
-| **SOPHIA Core** *(this repo)* | LLM client, module registry, token tracking |
-| **SOPHIA Climate** | AI-driven HVAC optimization and efficiency scoring |
-| **SOPHIA Presence** | Family presence tracking with RAG pattern storage |
-| **SOPHIA Systems** | Hardware telemetry — TrueNAS, GPU, BMC sensors |
+| Module | Repository | Status |
+|--------|------------|--------|
+| SOPHIA Core | [ha-sophia-core](https://github.com/williasj/ha-sophia-core) | Released |
+| SOPHIA Climate | [ha-sophia-climate](https://github.com/williasj/ha-sophia-climate) | Released |
+| SOPHIA Systems | [ha-sophia-systems](https://github.com/williasj/ha-sophia-systems) | Released |
+| SOPHIA Presence | ha-sophia-presence | Coming Soon |
 
 Each module is a separate HACS integration and installs independently.
 
