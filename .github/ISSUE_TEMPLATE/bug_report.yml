@@ -1,0 +1,91 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out as much as possible.
+
+  - type: input
+    id: module_version
+    attributes:
+      label: Module Version
+      description: Version of the SOPHIA module (check manifest.json or the release tag)
+      placeholder: "e.g. v1.3.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant Version
+      description: Your Home Assistant version
+      placeholder: "e.g. 2024.12.1"
+    validations:
+      required: true
+
+  - type: input
+    id: ollama_model
+    attributes:
+      label: Ollama Model (if relevant)
+      description: Model name if the bug involves LLM behavior
+      placeholder: "e.g. qwen2.5-coder:7b"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is
+      placeholder: "What happened? What did you expect to happen?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this bug?
+      placeholder: |
+        1. Configure X as...
+        2. Trigger Y by...
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: |
+        Paste relevant logs here. In Home Assistant go to:
+        Settings > System > Logs, then filter by "sophia"
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (sanitized)
+      description: |
+        Relevant configuration details. Remove any personal information,
+        IP addresses, API keys, or credentials before pasting.
+      render: yaml
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I have removed all personal information from logs and config above
+          required: true
+        - label: I am running the latest version of this module
+          required: false

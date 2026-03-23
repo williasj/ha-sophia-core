@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: SOPHIA CLA
+    url: https://github.com/williasj/ha-sophia-presence/blob/main/CLA.md
+    about: Read the Contributor License Agreement before submitting a pull request
+  - name: Ko-fi Support
+    url: https://ko-fi.com/sophiadev
+    about: Support SOPHIA development
