@@ -41,6 +41,7 @@ DEFAULT_QDRANT_URL = "http://localhost:6333"
 DEFAULT_TEI_URL = "http://localhost:8764"
 DEFAULT_SEARCH_RESULTS = 5
 DEFAULT_RAG_RESULTS = 5
+DEFAULT_RAG_VECTOR_SIZE = 1024
 
 
 class TokenUsageTracker:
@@ -572,7 +573,8 @@ class SophiaLLMClient:
         self,
         query: str,
         collection: str,
-        num_results: int = DEFAULT_RAG_RESULTS
+        num_results: int = DEFAULT_RAG_RESULTS,
+        query_filter: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Embed query, search Qdrant collection, return top results.
 
@@ -594,6 +596,8 @@ class SophiaLLMClient:
                 "limit": num_results,
                 "with_payload": True,
             }
+            if query_filter:
+                payload["filter"] = query_filter
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.qdrant_url}/collections/{collection}/points/search",
@@ -646,6 +650,233 @@ class SophiaLLMClient:
             "Use the above knowledge base context to inform your response where relevant."
         )
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Public RAG API (canonical surface for scoped SOPHIA integrations)
+    #
+    # Scoped integrations (sophia_climate, sophia_presence, etc.) MUST use
+    # only these public methods for any interaction with Qdrant or TEI.
+    # Direct aiohttp access to qdrant_url or tei_url from outside sophia_core
+    # is not permitted. This preserves the boundary that sophia_core is the
+    # single point of contact for all AI backend services.
+    # ------------------------------------------------------------------
+
+    async def rag_embed(self, text: str) -> Optional[List[float]]:
+        """Public: embed a text string via TEI. Returns vector or None."""
+        return await self._embed_query(text)
+
+    async def rag_search(
+        self,
+        collection: str,
+        query: str,
+        num_results: int = DEFAULT_RAG_RESULTS,
+        query_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Public: embed query, search Qdrant collection, return top results.
+
+        Optional query_filter is a Qdrant filter dict (must/should/must_not).
+        Returns list of {text, score, metadata}. Empty list on any error.
+        """
+        return await self._query_rag(query, collection, num_results, query_filter)
+
+    async def rag_ensure_collection(
+        self,
+        collection: str,
+        vector_size: int = DEFAULT_RAG_VECTOR_SIZE,
+        distance: str = "Cosine",
+    ) -> bool:
+        """Public: create a Qdrant collection if it does not already exist.
+
+        Returns True if the collection exists or was created, False on error.
+        """
+        import aiohttp
+
+        if not self.qdrant_url:
+            _LOGGER.warning(
+                "rag_ensure_collection: qdrant_url not configured for '%s'",
+                collection,
+            )
+            return False
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.qdrant_url}/collections/{collection}",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status == 200:
+                        _LOGGER.debug(
+                            "rag_ensure_collection: '%s' already exists", collection
+                        )
+                        return True
+
+                async with session.put(
+                    f"{self.qdrant_url}/collections/{collection}",
+                    json={"vectors": {"size": vector_size, "distance": distance}},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status in (200, 201):
+                        _LOGGER.info(
+                            "rag_ensure_collection: created '%s' (size=%d, %s)",
+                            collection, vector_size, distance,
+                        )
+                        return True
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "rag_ensure_collection: failed to create '%s': HTTP %d %s",
+                        collection, resp.status, body[:200],
+                    )
+                    return False
+        except Exception as err:
+            _LOGGER.warning(
+                "rag_ensure_collection: error for '%s': %s", collection, err
+            )
+            return False
+
+    async def rag_upsert(
+        self,
+        collection: str,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        doc_id: Optional[str] = None,
+    ) -> bool:
+        """Public: embed text via TEI and upsert into a Qdrant collection.
+
+        doc_id is a caller-supplied string used to derive a deterministic
+        integer point ID (so repeated writes with the same doc_id overwrite).
+        When doc_id is None, an MD5 of the first 200 chars of text is used.
+        Returns True on success, False on any error.
+        """
+        import aiohttp
+        import hashlib
+
+        if not self.qdrant_url:
+            _LOGGER.warning(
+                "rag_upsert: qdrant_url not configured for '%s'", collection
+            )
+            return False
+
+        try:
+            vector = await self._embed_query(text)
+            if not vector:
+                _LOGGER.warning(
+                    "rag_upsert: embed returned empty for '%s', skipping", collection
+                )
+                return False
+
+            if not doc_id:
+                doc_id = hashlib.md5(text[:200].encode()).hexdigest()
+
+            point_id = int(hashlib.md5(doc_id.encode()).hexdigest()[:8], 16)
+
+            payload = dict(metadata or {})
+            payload["text"] = text
+            payload["stored_at"] = datetime.now().isoformat()
+            payload["doc_id"] = doc_id
+
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    f"{self.qdrant_url}/collections/{collection}/points",
+                    json={
+                        "points": [
+                            {"id": point_id, "vector": vector, "payload": payload}
+                        ]
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status in (200, 201):
+                        _LOGGER.debug(
+                            "rag_upsert: stored doc '%s' in '%s'",
+                            doc_id[:32], collection,
+                        )
+                        return True
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "rag_upsert: qdrant write failed for '%s': HTTP %d %s",
+                        collection, resp.status, body[:200],
+                    )
+                    return False
+        except Exception as err:
+            _LOGGER.warning(
+                "rag_upsert: error for '%s': %s", collection, err
+            )
+            return False
+
+    async def rag_purge_older_than(
+        self,
+        collection: str,
+        cutoff_iso: str,
+        timestamp_field: str = "stored_at",
+    ) -> int:
+        """Public: delete points whose payload[timestamp_field] is lexicographically
+        less than cutoff_iso. Uses ISO-8601 string comparison which is correct
+        for properly zero-padded ISO timestamps.
+
+        Returns number of points deleted, or 0 on error.
+        """
+        import aiohttp
+
+        if not self.qdrant_url:
+            _LOGGER.warning(
+                "rag_purge_older_than: qdrant_url not configured for '%s'",
+                collection,
+            )
+            return 0
+
+        try:
+            query_filter = {
+                "must": [
+                    {
+                        "key": timestamp_field,
+                        "range": {"lt": cutoff_iso},
+                    }
+                ]
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.qdrant_url}/collections/{collection}/points/count",
+                    json={"filter": query_filter, "exact": True},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        _LOGGER.warning(
+                            "rag_purge_older_than: count failed for '%s': HTTP %d %s",
+                            collection, resp.status, body[:200],
+                        )
+                        return 0
+                    count_data = await resp.json()
+                    to_delete = count_data.get("result", {}).get("count", 0)
+
+                if to_delete == 0:
+                    _LOGGER.debug(
+                        "rag_purge_older_than: nothing to delete from '%s'",
+                        collection,
+                    )
+                    return 0
+
+                async with session.post(
+                    f"{self.qdrant_url}/collections/{collection}/points/delete",
+                    json={"filter": query_filter},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status in (200, 202):
+                        _LOGGER.info(
+                            "rag_purge_older_than: deleted %d points from '%s' (cutoff %s)",
+                            to_delete, collection, cutoff_iso,
+                        )
+                        return to_delete
+                    body = await resp.text()
+                    _LOGGER.warning(
+                        "rag_purge_older_than: delete failed for '%s': HTTP %d %s",
+                        collection, resp.status, body[:200],
+                    )
+                    return 0
+        except Exception as err:
+            _LOGGER.warning(
+                "rag_purge_older_than: error for '%s': %s", collection, err
+            )
+            return 0
 
     # ------------------------------------------------------------------
     # Token extraction (unchanged from original)
