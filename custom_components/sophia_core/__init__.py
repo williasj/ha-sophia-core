@@ -661,6 +661,15 @@ class SophiaLLMClient:
     # single point of contact for all AI backend services.
     # ------------------------------------------------------------------
 
+    def has_rag_backend(self) -> bool:
+        """Public: return True if both Qdrant and TEI are configured.
+
+        Scoped integrations call this synchronously at setup time to decide
+        whether to enable RAG features. Returns False if either backend URL
+        is absent or still set to the default placeholder.
+        """
+        return bool(self.qdrant_url and self.tei_url)
+
     async def rag_embed(self, text: str) -> Optional[List[float]]:
         """Public: embed a text string via TEI. Returns vector or None."""
         return await self._embed_query(text)
