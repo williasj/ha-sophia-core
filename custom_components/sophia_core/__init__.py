@@ -661,6 +661,15 @@ class SophiaLLMClient:
     # single point of contact for all AI backend services.
     # ------------------------------------------------------------------
 
+    def has_rag_backend(self) -> bool:
+        """Public: return True if both Qdrant and TEI are configured.
+
+        Scoped integrations call this synchronously at setup time to decide
+        whether to enable RAG features. Returns False if either backend URL
+        is absent or still set to the default placeholder.
+        """
+        return bool(self.qdrant_url and self.tei_url)
+
     async def rag_embed(self, text: str) -> Optional[List[float]]:
         """Public: embed a text string via TEI. Returns vector or None."""
         return await self._embed_query(text)
@@ -877,6 +886,90 @@ class SophiaLLMClient:
                 "rag_purge_older_than: error for '%s': %s", collection, err
             )
             return 0
+
+    async def rag_query_by_daterange(
+        self,
+        collection: str,
+        start_iso: str,
+        end_iso: str,
+        timestamp_field: str = "timestamp",
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Public: fetch all points whose payload[timestamp_field] falls within
+        [start_iso, end_iso] using ISO-8601 string comparison. No semantic
+        embedding is performed -- this is a pure metadata filter scroll.
+
+        Intended for council/review workflows that need all decisions in a
+        fixed time window rather than a semantic nearest-neighbour search.
+
+        Returns list of payload dicts (each point's full payload), empty on
+        any error. Caller receives raw payloads without score fields.
+        """
+        import aiohttp
+
+        if not self.qdrant_url:
+            _LOGGER.warning(
+                "rag_query_by_daterange: qdrant_url not configured for '%s'",
+                collection,
+            )
+            return []
+
+        scroll_filter = {
+            "must": [
+                {"key": timestamp_field, "range": {"gte": start_iso}},
+                {"key": timestamp_field, "range": {"lte": end_iso}},
+            ]
+        }
+
+        try:
+            results: List[Dict[str, Any]] = []
+            next_offset = None
+
+            async with aiohttp.ClientSession() as session:
+                while True:
+                    body: Dict[str, Any] = {
+                        "filter": scroll_filter,
+                        "limit": min(limit, 100),
+                        "with_payload": True,
+                        "with_vector": False,
+                    }
+                    if next_offset is not None:
+                        body["offset"] = next_offset
+
+                    async with session.post(
+                        f"{self.qdrant_url}/collections/{collection}/points/scroll",
+                        json=body,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            _LOGGER.warning(
+                                "rag_query_by_daterange: scroll failed for '%s': "
+                                "HTTP %d %s",
+                                collection, resp.status, text[:200],
+                            )
+                            break
+                        data = await resp.json()
+
+                    points = data.get("result", {}).get("points", [])
+                    for pt in points:
+                        results.append(pt.get("payload", {}))
+
+                    next_offset = data.get("result", {}).get("next_page_offset")
+                    if not next_offset or len(results) >= limit:
+                        break
+
+            _LOGGER.debug(
+                "rag_query_by_daterange: '%s' [%s -> %s] returned %d points",
+                collection, start_iso, end_iso, len(results),
+            )
+            return results[:limit]
+
+        except Exception as err:
+            _LOGGER.warning(
+                "rag_query_by_daterange: error for '%s': %s", collection, err
+            )
+            return []
 
     # ------------------------------------------------------------------
     # Token extraction (unchanged from original)
